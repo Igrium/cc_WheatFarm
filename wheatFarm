@@ -198,7 +198,7 @@ end
 
 print("Starting wheat farm")
 while true do
-	--turtleUtils.itemTimer(1,2,delayTime)
+	turtleUtils.itemTimer(1,2,delayTime)
 	harvestCycle()
 	turtleUtils.setupItemTimer(1,2,{name="minecraft:wheat_seeds",damage=0})
 end
