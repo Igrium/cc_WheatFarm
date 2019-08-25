@@ -1,0 +1,243 @@
+-- Simple wheat 9x9 farm program designed to work with CP storage system
+-- REQUIRES farmStorage and turtleUtils v1.0.0
+
+os.loadAPI('farmStorage')
+os.loadAPI('turtleUtils')
+rednet.open('left')
+
+requiredFuel = 100
+-- requiredFuel = 19950
+
+-- 5 day cycles
+delayTime = 6000
+--delayTime = 60
+
+fuelItem = {name="minecraft:log",damage=1}
+
+-- Given an item object, find and select it in the inventory
+function selectItem(item)
+	if turtle.getItemDetail() ~= nil and turtle.getItemDetail().name == item.name and turtle.getItemDetail().damage == item.damage then
+		return
+	end
+	
+	for i=1,16,1 do
+		if turtle.getItemDetail(i) ~= nil and turtle.getItemDetail(i).name == item.name and turtle.getItemDetail(i).damage == item.damage then
+			slot = i
+		end
+	end
+	
+
+	
+	if slot == nil then
+		print("Unable to select "..item.name)
+	else
+		turtle.select(slot)
+	end
+end
+
+-- Get how many of an item the turtle has
+function tally(item)
+	local count = 0
+	for i = 1,16,1 do
+		if turtle.getItemDetail(i) ~= nil
+		and turtle.getItemDetail(i).name == item.name 
+		and turtle.getItemDetail(i).damage == item.damage then
+			count = count + turtle.getItemCount(i)
+		end
+	end
+	return count
+end
+
+-- Drop all of an item <item> [amount to keep in inventory]
+function dropItem(item, keepAmount)
+	if keepAmount == nil then keepAmount = 0 end
+	
+	-- Keep track of selected slot
+	local selectedSlot = turtle.getSelectedSlot()
+	
+	-- Make array of all matching slots
+	local slots = {}
+	for i=1,16,1 do
+		if turtle.getItemDetail(i) ~= nil and turtle.getItemDetail(i).name == item.name and turtle.getItemDetail(i).damage == item.damage then
+			slots[#slots+1] = i
+		end
+	end
+	
+	-- Drop all items
+	for k,v in pairs(slots) do
+		-- Make sure we have keepAmount left
+		if tally(item) <= keepAmount then
+			turtle.select(selectedSlot)
+			return
+		end
+		
+		local currentAmount = tally(item)
+		turtle.select(v)
+		if currentAmount - turtle.getItemCount() < keepAmount then
+			turtle.drop(currentAmount - keepAmount)
+		else
+			turtle.drop()
+		end
+		
+	end
+	
+	turtle.select(selectedSlot)
+end
+
+-- Harvest and replant the current block, regardless of age
+function replant()
+	turtle.digDown()
+	selectItem({name="minecraft:wheat_seeds",damage=0})
+	turtle.placeDown()
+end
+
+-- Harvest and replant the whole farm, regardless of age
+function harvest()
+	print("Harvesting crops...")
+	turtle.turnLeft()
+	
+	replant()
+	for i = 1,4,1 do
+		for j = 1,8,1 do
+			turtle.forward()
+			replant()
+		end
+		turtle.turnLeft()
+		turtle.forward()
+		replant()
+		turtle.turnLeft()
+		for j = 1,8,1 do
+			turtle.forward()
+			replant()
+		end
+		turtle.turnRight()
+		turtle.forward()
+		replant()
+		turtle.turnRight()
+	end
+	
+	-- Final stretch
+	for i = 1,8,1 do
+		turtle.forward()
+		replant()
+	end
+	
+	-- Return to base
+	for i = 1,2,1 do
+		turtle.turnRight()
+		for j = 1,8,1 do
+			turtle.forward()
+		end
+	end
+	turtle.turnLeft()
+	
+end
+
+-- Get a shipment from the storage system
+function requestShipment(items)
+	success = farmStorage.requestShipment(items)
+	
+	if not success then
+		return false
+	end
+	
+	-- Put system into hold mode
+	redstone.setOutput('top', true)
+	
+	-- Manually dispense minecart
+	redstone.setOutput('right', true)
+	os.sleep(.1)
+	redstone.setOutput('right', false)
+	
+	-- Put system into shipment mode
+	os.sleep(1)
+	redstone.setOutput('right',true)
+	
+	return true
+end
+
+-- Return a shipment's minecart chest
+function returnShipment()
+	redstone.setOutput('right', false)
+	os.sleep(.05)
+	redstone.setOutput('top', false)
+	
+end
+
+-- Suck as much as possible ou of inventory
+function suckAll()
+	local canSuck = true
+	while canSuck do
+		canSuck = turtle.suck()
+	end
+end
+
+-- Search for all refuelable items and refuel
+function attemptRefuel()
+	for i = 1,16,1 do
+		turtle.select(i)
+		turtle.refuel()
+	end
+	
+	return turtle.getFuelLevel() >= requiredFuel
+end
+
+-- Refuel the turtle by any means nessicary (storage request)
+function refuel()
+	print("Refueling...")
+	if not attemptRefuel() then
+		print("Retrieving fuel from storage system")
+		if farmStorage.getItemPercentage(fuelItem) == 0 then
+			print("Storage system doesn't have fuel! Please supply turtle with fuel, or restart to check storage again.")
+			local success = false
+			while not success do
+				os.queueEvent("randomEvent")
+				os.pullEvent()
+				success = attemptRefuel()
+			end
+			return true
+		end
+		local hasShipment = requestShipment({farmStorage.itemRequest(fuelItem,1)})
+		if hasShipment then
+			local success = false
+			while not success do
+				os.queueEvent("randomEvent")
+				os.pullEvent()
+				turtle.suck()
+				success = attemptRefuel()
+			end
+			suckAll()
+			returnShipment()
+			return true
+		else
+			print("Shipment failed. Please manually supply turtle with fuel.")
+			local success = false
+			while not success do
+				os.queueEvent("randomEvent")
+				os.pullEvent()
+				success = attemptRefuel()
+			end
+			return true
+		end
+	end
+	return true
+end
+
+-- Complete harvest cycle
+function harvestCycle()
+	print("Starting harvest cycle.")
+	if turtle.getFuelLevel() < requiredFuel then
+		refuel()
+	end
+	harvest()
+	print("Depositing Items")
+	dropItem({name="minecraft:wheat",damage=0})
+	dropItem({name="minecraft:wheat_seeds",damage=0},64)
+end
+
+print("Starting wheat farm")
+while true do
+	turtleUtils.itemTimer(1,2,delayTime)
+	harvestCycle()
+	turtleUtils.setupItemTimer(1,2,{name="minecraft:wheat_seeds",damage=0})
+end
